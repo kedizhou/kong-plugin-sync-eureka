@@ -1,6 +1,6 @@
 local cjson = require "cjson"
 local http = require "resty.http"
-local singletons = require "kong.singletons"
+--local singletons = require "kong.singletons"
 local ngx_re = require "ngx.re"
 
 local admin_host = nil
@@ -88,13 +88,15 @@ end
 
 --- get kong admin api listeners default is 127.0.0.1:8001
 local function get_admin_listen()
-    for _, item in pairs(singletons.configuration.admin_listeners) do
-        if not item['ssl'] then
-            if "0.0.0.0" == item["ip"] then item["ip"] = "127.0.0.1" end
-            return "http://" .. item["ip"] .. ":" .. item['port']
-        end
-    end
-    return nil
+    LOG_INFO("http://127.0.0.1:9001")
+    -- for _, item in pairs(singletons.configuration.admin_listeners) do
+    --     if not item['ssl'] then
+    --         if "0.0.0.0" == item["ip"] then item["ip"] = "127.0.0.1" end
+    --         return "http://" .. item["ip"] .. ":" .. item['port']
+    --     end
+    -- end
+    -- return nil
+    return "http://127.0.0.1:9001"
 end
 
 --- http client of kong admin api
@@ -102,6 +104,7 @@ end
 ---@param path string uri of path like /test
 ---@param body table request body
 local function admin_client(method, path, body)
+    LOG_INFO("=>>>>>>>>admin_client ... ...")
     if not admin_host then admin_host = get_admin_listen() end
     local httpc = http.new()
 
@@ -122,6 +125,7 @@ end
 ---@param err string error message
 ---@param cache_key string cache key
 local function parse_resp(type, resp, err, cache_key)
+    LOG_INFO("=>>>>>>>>parse_resp... ...")
     -- created success status is 201
     -- query success status is 200
     -- 409 is conflict
@@ -148,6 +152,7 @@ end
 --- create service by app name
 ---@param name string app name
 local function create_service(name)
+    LOG_INFO("=>>>>>>>>create_service... ...")
     local cache_key = "sync_eureka_apps:service:" .. name
     if kong_cache:get(cache_key) then return "ok", nil end
 
@@ -167,6 +172,7 @@ end
 --- create route by app name
 ---@param name string app name
 local function create_route(name)
+    LOG_INFO("=>>>>>>>>create_route... ...")
     local cache_key = "sync_eureka_apps:route:" .. name
     if kong_cache:get(cache_key) then return "ok", nil end
 
@@ -188,6 +194,7 @@ end
 ---@param name string app name
 ---@param item table object of eureka's instance
 local function create_upstream(name, item)
+    LOG_INFO("=>>>>>>>>create_upstream... ...")
 
     local cache_key = "sync_eureka_apps:upstream:" .. name
     if kong_cache:get(cache_key) then return "ok", nil end
@@ -223,6 +230,7 @@ end
 ---@param name string upstream name
 ---@param target_next string url of next targets page
 local function get_targets(name, target_next)
+    LOG_INFO("=>>>>>>>>get_targets... ...")
 
     local res, err = admin_client(METHOD_GET, target_next, nil)
     local targets = {}
@@ -254,6 +262,7 @@ end
 ---@param name string app name
 ---@param target string app host:port
 local function delete_target(name, target)
+    LOG_INFO("=>>>>>>>>delete_target... ...")
 
     local cache_key = "sync_eureka_apps:target:" .. name .. ":" .. target
 
@@ -272,6 +281,7 @@ end
 ---@param weight integer 0-1000 default 100 
 ---@param tags table tags  
 local function put_target(name, target, weight, tags)
+    LOG_INFO("=>>>>>>>>put_target... ...")
 
     -- get_targets use(fetch targets)
     local cache_key = "sync_eureka_apps:target:" .. name .. ":" .. target
@@ -308,6 +318,7 @@ end
 --- fetch kong's upstream
 ---@param upstream_next string url of next upstream page
 local function kong_upstreams(upstream_next)
+    LOG_INFO("=>>>>>>>>kong_upstreams... ...")
 
     LOG_DEBUG("[fetch kong's upstream]: path:", upstream_next or "/upstreams")
     local res, err =
@@ -336,7 +347,11 @@ end
 --- cron job to cleanup invalid targets
 SyncEurekaHandler.cleanup_targets = function()
     LOG_DEBUG("cron job to cleanup invalid targets")
-    sync_eureka_plugin = plugins:select_by_cache_key("plugins:sync-eureka::::")
+    -- sync_eureka_plugin = plugins:select_by_cache_key("plugins:sync-eureka::::")
+    
+    local key = kong.db.plugins:cache_key('sync-eureka')
+    sync_eureka_plugin = plugins:select_by_cache_key(key)
+
     if not sync_eureka_plugin then return end
     local app_list = eureka_apps()
     local upstreams = kong_upstreams() or {}
@@ -363,7 +378,9 @@ end
 SyncEurekaHandler.sync_job = function(app_name)
     LOG_INFO("cron job to fetch apps from eureka server [ ", app_name or "all",
              " ]")
-    sync_eureka_plugin = plugins:select_by_cache_key("plugins:sync-eureka::::")
+    -- sync_eureka_plugin = plugins:select_by_cache_key("plugins:sync-eureka::::")
+    local key = kong.db.plugins:cache_key('sync-eureka')
+    sync_eureka_plugin = plugins:select_by_cache_key(key)
     if not sync_eureka_plugin then return end
 
     local cache_app_list = kong_cache:get("sync_eureka_apps") or "{}"
@@ -381,8 +398,7 @@ SyncEurekaHandler.sync_job = function(app_name)
             if target ~= "health_path" then
                 put_target(name, target, status_weitht[status], {status})
             end
-        end
-    end
+        end end
     kong_cache:safe_set("sync_eureka_apps", cjson.encode(cache_app_list),
                         cache_exptime)
 end
@@ -390,8 +406,11 @@ end
 --- init worker
 function SyncEurekaHandler:init_worker()
     if 0 ~= ngx.worker.id() then return end
+    
+    -- https://discuss.konghq.com/t/custom-plugin-access-plugin-configuration-from-init-worker/4445
+    local key = kong.db.plugins:cache_key('sync-eureka')
+    sync_eureka_plugin = plugins:select_by_cache_key(key)
 
-    sync_eureka_plugin = plugins:select_by_cache_key("plugins:sync-eureka::::")
     LOG_INFO("init worker,load sync_eureka_plugin:",
              cjson.encode(sync_eureka_plugin))
 
